@@ -1,0 +1,317 @@
+---
+title: "MIC analysis of Methicillin-resistant Staphylococcus epidermidis"
+author: "Olivier Restif, with data from Jesper Larsen"
+date: "21/04/2022"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Last updated: `r Sys.Date()`
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(tidyverse)
+library(readxl)
+library(mixtools)
+library(GGally)
+source("../MIC_mixture_models_v3.R")
+```
+
+```{r}
+mic.data <- read_excel("S epidermidis MIC data.xlsx",1) %>%
+	mutate(AC.CA_2.1 = str_split(`AC/CA (2:1 in MHB)`,"/",simplify = T)[,2] %>% as.numeric(),
+		 AC.CA_15 = ifelse(`AC/CA (15)`=="≦0.0039",0.0039,`AC/CA (15)`) %>% as.numeric(),
+		 Clavulanic_acid = ifelse(`Clavulanic acid`==">256",Inf,`Clavulanic acid`) %>% as.numeric(),
+		 .keep= "unused")
+
+mic.data.long <- mic.data %>% pivot_longer(cols=3:8, names_to = "Antibiotic",values_to = "MIC")
+```
+
+# Data description
+
+Number of samples: `r nrow(mic.data)`
+
+```{r}
+mic.data %>% group_by(Genotype_EMH) %>% summarise(Samples=n())
+```
+
+
+```{r, out.width="120%"}
+ggplot(mic.data.long, aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	facet_wrap(vars(Antibiotic))
+```
+
+Pairwise correlations. Values show log2(MIC).
+
+```{r}
+cor(mic.data[,3:8],method = "spearman") %>% round(3)
+```
+
+
+
+```{r}
+ggpairs(mic.data.long %>% 
+	  	mutate(log2.MIC = ifelse(is.finite(MIC),round(log2(MIC)),9)) %>%
+	  	select(-MIC) %>%
+	  	pivot_wider(names_from = Antibiotic, values_from = log2.MIC),
+	  columns = 3:8,
+	  diag=list(continuous="barDiag")
+	  ) 
+```
+
+
+```{r}
+ggpairs(mic.data.long %>% 
+	  	mutate(log2.MIC = ifelse(is.finite(MIC),round(log2(MIC)),9)) %>%
+	  	select(-MIC) %>%
+	  	pivot_wider(names_from = Antibiotic, values_from = log2.MIC),
+	  columns = 3:8,
+	  ggplot2::aes(colour=Genotype_EMH),
+	  diag=list(continuous="barDiag")
+	  ) 
+```
+
+Spearman correlation coefficients:
+```{r}
+ggpairs(mic.data.long %>% 
+	  	mutate(log2.MIC = ifelse(is.finite(MIC),round(log2(MIC)),9)) %>%
+	  	select(-MIC) %>%
+	  	pivot_wider(names_from = Antibiotic, values_from = log2.MIC),
+	  columns = 3:8,
+	  upper = list(continuous = wrap("cor", method = "spearman")),
+	  diag=list(continuous="barDiag"),
+	  title="Spearman correlation coefficients"
+	  ) 
+
+```
+
+
+# Mixture models
+
+## AC/CA (15)
+
+```{r}
+ggplot(mic.data.long %>% filter(Antibiotic=="AC.CA_15"), aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1))
+```
+
+
+```{r, include=F}
+AC.CA_15.range <- read_excel("S epidermidis MIC data.xlsx",3)$`AC/CA (15)` %>% sort()
+AC.CA_15.MM.mle <- fit.multi.mix(mic.data$AC.CA_15, AC.CA_15.range, K=3)
+```
+
+```{r}
+AC.CA_15.MM.mle$cut.offs
+```
+
+Proposed ECOFF for AC/CA 15: 5.66.
+
+- The 71 isolates with MIC $\leq 4$ are labelled "susceptible".
+- The 67 isolates with MIC $\geq 8$ are labelled "resistant".
+
+
+Predicted distribution of susceptible (S) and resistant (R) isolates from the model, with actual data shown in grey:
+
+```{r}
+ggplot(AC.CA_15.MM.mle$pred.n[[3]] %>% 
+	 	mutate(MIC=factor(High), Pred.S = round(Pred.1 + Pred.2,1), Pred.R = round(Pred.3,1), .keep="none") %>%
+	 	pivot_longer(2:3,names_to="Category", values_to="N")) + 
+	geom_col(aes(x=MIC,y=N, fill=Category)) +
+	geom_vline(xintercept=11.5)+
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	geom_col(data=AC.CA_15.MM.mle$pred.n[[3]] %>% transmute(MIC=factor(High), N=N), aes(x=MIC, y=N), fill=NA, col=grey(0.5))
+	
+```
+
+
+## AC/CA (2:1 in MHB)
+
+Here we only report the MIC for the second drug, e.g. 4 for "8/4".
+
+```{r}
+ggplot(mic.data.long %>% filter(Antibiotic=="AC.CA_2.1"), aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1))
+```
+
+```{r, include=F}
+AC.CA_2.1.range <- read_excel("S epidermidis MIC data.xlsx",3)$`AC/CA (2:1 in MHB)` %>% sort()
+AC.CA_2.1.MM.mle <- fit.multi.mix(mic.data$AC.CA_2.1, AC.CA_2.1.range, K=3)
+```
+
+```{r}
+AC.CA_2.1.MM.mle$cut.offs
+```
+
+Proposed ECOFF for "AC/CA (2:1 in MHB)": 11.3/5.65.
+
+- The 69 isolates with MIC $\leq 4$ are labelled "susceptible".
+- The 69 isolates with MIC $\geq 8$ are labelled "resistant".
+
+Predicted distribution of susceptible (S) and resistant (R) isolates from the model, with actual data shown in grey:
+
+```{r}
+ggplot(AC.CA_2.1.MM.mle$pred.n[[2]] %>% 
+	 	mutate(MIC=factor(High), Pred.S = round(Pred.1,1), Pred.R = round(Pred.2,1), .keep="none") %>%
+	 	pivot_longer(2:3,names_to="Category", values_to="N")) + 
+	geom_col(aes(x=MIC,y=N, fill=Category)) +
+	geom_vline(xintercept=7.5)+
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	geom_col(data=AC.CA_2.1.MM.mle$pred.n[[2]] %>% transmute(MIC=factor(High), N=N), aes(x=MIC, y=N), fill=NA, col=grey(0.5))
+	
+```
+
+
+## Amoxicillin
+
+```{r}
+ggplot(mic.data.long %>% filter(Antibiotic=="Amoxicillin"), aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1))
+```
+
+
+```{r, include=F}
+Amoxicillin.range <- read_excel("S epidermidis MIC data.xlsx",3)$`Amoxicillin` %>% sort()
+Amoxicillin.MM.mle <- fit.multi.mix(mic.data$Amoxicillin, Amoxicillin.range, K=3)
+```
+
+```{r}
+Amoxicillin.MM.mle$cut.offs
+```
+
+Proposed ECOFF for Amoxicillin: 5.66.
+
+- The 31 isolates with MIC $\leq 4$ are labelled "susceptible".
+- The 107 isolates with MIC $\geq 8$ are labelled "resistant".
+
+Predicted distribution of susceptible (S) and resistant (R) isolates from the model, with actual data shown in grey:
+
+```{r}
+ggplot(Amoxicillin.MM.mle$pred.n[[3]] %>% 
+	 	mutate(MIC=factor(High), Pred.S = round(Pred.1+Pred.2,1), Pred.R = round(Pred.3,1), .keep="none") %>%
+	 	pivot_longer(2:3,names_to="Category", values_to="N")) + 
+	geom_col(aes(x=MIC,y=N, fill=Category)) +
+	geom_vline(xintercept=5.5)+
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	geom_col(data=Amoxicillin.MM.mle$pred.n[[3]] %>% transmute(MIC=factor(High), N=N), aes(x=MIC, y=N), fill=NA, col=grey(0.5))
+	
+```
+
+
+## Penicillin
+
+```{r}
+ggplot(mic.data.long %>% filter(Antibiotic=="Penicillin"), aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1))
+```
+
+
+```{r, include=F}
+Penicillin.range <- read_excel("S epidermidis MIC data.xlsx",3)$`Penicillin` %>% sort()
+Penicillin.MM.mle <- fit.multi.mix(mic.data$Penicillin, Penicillin.range, K=3)
+```
+
+```{r}
+Penicillin.MM.mle$cut.offs
+```
+
+Proposed ECOFF for Penicillin: 11.31.
+
+- The 52 isolates with MIC $\leq 8$ are labelled "susceptible".
+- The 86 isolates with MIC $\geq 16$ are labelled "resistant".
+
+Predicted distribution of susceptible (S) and resistant (R) isolates from the model, with actual data shown in grey:
+
+```{r}
+ggplot(Penicillin.MM.mle$pred.n[[3]] %>% 
+	 	mutate(MIC=factor(High), Pred.S = round(Pred.1+Pred.2,1), Pred.R = round(Pred.3,1), .keep="none") %>%
+	 	pivot_longer(2:3,names_to="Category", values_to="N")) + 
+	geom_col(aes(x=MIC,y=N, fill=Category)) +
+	geom_vline(xintercept=6.5)+
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	geom_col(data=Penicillin.MM.mle$pred.n[[3]] %>% transmute(MIC=factor(High), N=N), aes(x=MIC, y=N), fill=NA, col=grey(0.5))
+	
+```
+
+
+## Cefoxitin
+
+```{r}
+ggplot(mic.data.long %>% filter(Antibiotic=="Cefoxitin"), aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1))
+```
+
+
+```{r, include=F}
+Cefoxitin.range <- read_excel("S epidermidis MIC data.xlsx",3)$`Cefoxitin` %>% sort()
+Cefoxitin.MM.mle <- fit.multi.mix(mic.data$Cefoxitin, Cefoxitin.range, K=3)
+```
+
+```{r}
+Cefoxitin.MM.mle$cut.offs
+```
+
+Proposed ECOFF for Cefoxitin: 90.5.
+
+- The 84 isolates with MIC $\leq 64$ are labelled "susceptible".
+- The 54 isolates with MIC $\geq 128$ are labelled "resistant".
+
+Predicted distribution of susceptible (S) and resistant (R) isolates from the model, with actual data shown in grey:
+
+```{r}
+ggplot(Cefoxitin.MM.mle$pred.n[[3]] %>% 
+	 	mutate(MIC=factor(High), Pred.S = round(Pred.1+Pred.2,1), Pred.R = round(Pred.3,1), .keep="none") %>%
+	 	pivot_longer(2:3,names_to="Category", values_to="N")) + 
+	geom_col(aes(x=MIC,y=N, fill=Category)) +
+	geom_vline(xintercept=7.5)+
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	geom_col(data=Cefoxitin.MM.mle$pred.n[[3]] %>% transmute(MIC=factor(High), N=N), aes(x=MIC, y=N), fill=NA, col=grey(0.5))
+	
+```
+
+
+## Clavulanic Acid
+
+```{r}
+ggplot(mic.data.long %>% filter(Antibiotic=="Clavulanic_acid"), aes(x=as.factor(MIC))) +
+	geom_bar(aes(fill = Genotype_EMH)) +
+	theme(axis.text.x = element_text(angle=75,hjust=1))
+```
+
+
+```{r, include=F}
+Clavulanic_acid.range <- read_excel("S epidermidis MIC data.xlsx",3)$`Clavulanic acid` %>% sort()
+Clavulanic_acid.MM.mle <- fit.multi.mix(mic.data$Clavulanic_acid,Clavulanic_acid.range, K=3)
+```
+
+```{r}
+Clavulanic_acid.MM.mle$cut.offs
+```
+
+
+Proposed ECOFF for Clavulanic Acid: 45.2
+
+- The 32 isolates with MIC $\leq 32$ are labelled "susceptible".
+- The 106 isolates with MIC $\geq 64$ are labelled "resistant".
+
+Predicted distribution of susceptible (S) and resistant (R) isolates from the model, with actual data shown in grey:
+
+```{r}
+ggplot(Clavulanic_acid.MM.mle$pred.n[[2]] %>% 
+	 	mutate(MIC=factor(High), Pred.S = round(Pred.1,1), Pred.R = round(Pred.2,1), .keep="none") %>%
+	 	pivot_longer(2:3,names_to="Category", values_to="N")) + 
+	geom_col(aes(x=MIC,y=N, fill=Category)) +
+	geom_vline(xintercept=6.5)+
+	theme(axis.text.x = element_text(angle=75,hjust=1)) +
+	geom_col(data=Clavulanic_acid.MM.mle$pred.n[[3]] %>% transmute(MIC=factor(High), N=N), aes(x=MIC, y=N), fill=NA, col=grey(0.5))
+	
+```
+
